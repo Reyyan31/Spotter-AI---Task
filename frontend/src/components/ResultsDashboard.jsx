@@ -39,7 +39,10 @@ const ResultsDashboard = ({ data, onBack }) => {
             <p className="text-gray-500 text-[10px] uppercase font-black tracking-tighter">System Reference</p>
             <p className="text-white font-mono text-xs">TRP-{Math.random().toString(36).substr(2, 6).toUpperCase()}</p>
           </div>
-          <button className="flex items-center space-x-2 px-6 py-3 bg-accent text-navy rounded-2xl font-bold hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all">
+          <button 
+            onClick={() => window.print()}
+            className="flex items-center space-x-2 px-6 py-3 bg-accent text-navy rounded-2xl font-black hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all hover:scale-105 active:scale-95"
+          >
             <FaFileExport />
             <span>Generate Full Report</span>
           </button>

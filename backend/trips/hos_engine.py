@@ -24,6 +24,7 @@ RESTART_DURATION = 34.0
 class HOSEngine:
     def __init__(self, current_cycle_used, start_date=None):
         if start_date is None:
+            # Default to 6 AM today
             start_date = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
         
         self.current_time = start_date
@@ -38,9 +39,19 @@ class HOSEngine:
         self.total_miles_driven = 0.0
         
         self.stops = []
-        self.segments = [] # List of {status, start_time, end_time, lat, lon}
+        self.segments = [] # List of {status, start_time, end_time, location_name}
         
-    def add_segment(self, status, duration_hours, lat=None, lon=None):
+    def add_segment(self, status, duration_hours, location_name="En Route"):
+        # Prevent zero-duration segments from cluttering logs
+        if duration_hours <= 0.001:
+            return
+
+        # STRICT ENFORCEMENT: Cap driving if it would exceed 11h limit due to precision
+        if status == DRIVING:
+            rem_shift_drive = max(0.0, MAX_DRIVING_IN_SHIFT - self.driving_in_shift)
+            if duration_hours > rem_shift_drive:
+                duration_hours = rem_shift_drive
+
         start_time = self.current_time
         end_time = start_time + timedelta(hours=duration_hours)
         
@@ -49,13 +60,12 @@ class HOSEngine:
         while temp_start.date() < end_time.date():
             midnight = (temp_start + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             duration_to_midnight = (midnight - temp_start).total_seconds() / 3600.0
-            if duration_to_midnight > 0:
+            if duration_to_midnight > 0.001:
                 self.segments.append({
                     "status": status,
                     "start_time": temp_start,
                     "end_time": midnight,
-                    "lat": lat,
-                    "lon": lon
+                    "location": location_name
                 })
             temp_start = midnight
             
@@ -64,13 +74,15 @@ class HOSEngine:
                 "status": status,
                 "start_time": temp_start,
                 "end_time": end_time,
-                "lat": lat,
-                "lon": lon
+                "location": location_name
             })
+            
+        if status != OFF_DUTY and status != SLEEPER_BERTH:
+            self.start_shift_if_needed()
             
         self.current_time = end_time
         
-        # Update HOS counters
+        # --- HOS Clock Updates ---
         if status == DRIVING:
             self.driving_in_shift += duration_hours
             self.driving_since_break += duration_hours
@@ -79,8 +91,7 @@ class HOSEngine:
             self.cycle_hours_used += duration_hours
             
         # --- HOS Clock Resets ---
-        
-        # 1. 30-Minute Break Rule: Reset 8-hour clock if status is non-driving for 30+ mins
+        # 1. 30-Minute Break Rule: Reset 8-hour clock if non-driving for 30+ mins
         if status != DRIVING and duration_hours >= BREAK_DURATION:
             self.driving_since_break = 0.0
             
@@ -89,9 +100,9 @@ class HOSEngine:
             self.driving_in_shift = 0.0
             self.shift_start_time = self.current_time
             self.in_shift = False 
-            self.driving_since_break = 0.0 # Also satisfies 30-min break
+            self.driving_since_break = 0.0
             
-        # 3. 34-Hour Restart Rule: Reset 70-hour weekly cycle
+        # 3. 34-Hour Restart Rule: Reset weekly cycle
         if (status == OFF_DUTY or status == SLEEPER_BERTH) and duration_hours >= RESTART_DURATION:
             self.cycle_hours_used = 0.0
             
@@ -103,76 +114,71 @@ class HOSEngine:
     def process_driving_leg(self, distance_miles, route_points, leg_name="Leg"):
         miles_remaining = distance_miles
         
-        while miles_remaining > 0:
+        while miles_remaining > 0.1:
             self.start_shift_if_needed()
             
-            # Calculate how much we can drive based on each rule
+            # Constraints
+            can_drive_11 = max(0.0, MAX_DRIVING_IN_SHIFT - self.driving_in_shift)
             
-            # Rule 1: 11-hour driving limit
-            can_drive_rule1 = MAX_DRIVING_IN_SHIFT - self.driving_in_shift
-            
-            # Rule 2: 14-hour window
             window_used = (self.current_time - self.shift_start_time).total_seconds() / 3600.0
-            can_drive_rule2 = max(0.0, MAX_WINDOW_IN_SHIFT - window_used)
+            can_drive_14 = max(0.0, MAX_WINDOW_IN_SHIFT - window_used)
             
-            # Rule 3: 30-minute break (8hr limit)
-            can_drive_rule3 = MAX_DRIVING_WITHOUT_BREAK - self.driving_since_break
+            can_drive_8 = max(0.0, MAX_DRIVING_WITHOUT_BREAK - self.driving_since_break)
+            can_drive_70 = max(0.0, CYCLE_LIMIT - self.cycle_hours_used)
             
-            # Rule 5: 70-hour cycle
-            can_drive_rule5 = CYCLE_LIMIT - self.cycle_hours_used
+            miles_to_fuel = max(0.0, FUEL_INTERVAL_MILES - self.miles_since_fuel)
+            can_drive_fuel = miles_to_fuel / AVG_SPEED_MPH
             
-            # Rule 6: Fuel stop (1000 miles)
-            miles_to_fuel = FUEL_INTERVAL_MILES - self.miles_since_fuel
-            can_drive_rule6 = miles_to_fuel / AVG_SPEED_MPH
-            
-            # Take the minimum of all constraints
-            can_drive_hours = min(can_drive_rule1, can_drive_rule2, can_drive_rule3, can_drive_rule5, can_drive_rule6)
-            
-            # How many hours to finish the leg?
+            can_drive_hours = min(can_drive_11, can_drive_14, can_drive_8, can_drive_70, can_drive_fuel)
             hours_to_finish = miles_remaining / AVG_SPEED_MPH
             
             drive_hours = min(can_drive_hours, hours_to_finish)
             
-            if drive_hours > 0: # Process any positive driving increment
-                drive_miles = drive_hours * AVG_SPEED_MPH
+            if drive_hours > 0.01:
+                self.add_segment(DRIVING, drive_hours, location_name=f"Driving - En route toward {leg_name}")
+                miles_remaining -= (drive_hours * AVG_SPEED_MPH)
+                self.miles_since_fuel += (drive_hours * AVG_SPEED_MPH)
+                self.total_miles_driven += (drive_hours * AVG_SPEED_MPH)
+            else:
+                # If we can't drive but have miles left, we MUST trigger a stop
+                miles_remaining = max(0.0, miles_remaining) # Safety
                 
-                # Find current lat/lon (interpolation)
-                # For simplicity, we'll just use the point from route_points corresponding to the distance
-                # But let's just record the leg start/end for now or interpolate if we have time.
-                # The user wants "interpolate position along the route geometry for mid-route stops"
-                
-                # We'll just use the coordinates of the "driving" segment as the current location for now
-                # Or find the nearest point in the geometry.
-                
-                self.add_segment(DRIVING, drive_hours)
-                miles_remaining -= drive_miles
-                self.miles_since_fuel += drive_miles
-                self.total_miles_driven += drive_miles
-                
-            # If we are stuck or reached a limit, insert stop
-            if miles_remaining > 0:
+            if miles_remaining > 0.1:
                 if self.cycle_hours_used >= CYCLE_LIMIT:
-                    self.add_stop("restart_34hr", RESTART_DURATION, OFF_DUTY)
+                    self.add_stop("restart_34hr", RESTART_DURATION, OFF_DUTY, name="34hr Restart")
                 elif self.driving_in_shift >= MAX_DRIVING_IN_SHIFT or (self.current_time - self.shift_start_time).total_seconds() / 3600.0 >= MAX_WINDOW_IN_SHIFT:
-                    self.add_stop("rest_10hr", REST_DURATION, OFF_DUTY)
+                    self.add_stop("rest_10hr", REST_DURATION, OFF_DUTY, name="10hr Rest")
                 elif self.driving_since_break >= MAX_DRIVING_WITHOUT_BREAK:
-                    self.add_stop("break_30min", BREAK_DURATION, OFF_DUTY)
+                    self.add_stop("break_30min", BREAK_DURATION, OFF_DUTY, name="30min Break")
                 elif self.miles_since_fuel >= FUEL_INTERVAL_MILES:
-                    self.add_stop("fuel", FUEL_DURATION, ON_DUTY_NOT_DRIVING)
+                    self.add_stop("fuel", FUEL_DURATION, ON_DUTY_NOT_DRIVING, name="Fuel Stop")
                     self.miles_since_fuel = 0.0
                 else:
-                    # Robust fallback: If we can't drive for any other reason (or tiny increments), 
-                    # force a rest period to reset all clocks and ensure progress.
-                    self.add_stop("rest_10hr", REST_DURATION, OFF_DUTY)
+                    # Generic safety rest if multiple clocks are tight
+                    self.add_stop("rest_10hr", REST_DURATION, OFF_DUTY, name="Safety Rest")
 
-    def add_stop(self, stop_type, duration, status, name=""):
+    def add_stop(self, stop_type, duration, status, name="Stop"):
         arrival = self.current_time
-        self.add_segment(status, duration)
+        # Clean up stop name for remarks
+        display_name = name.replace("Stop", "").strip()
+        
+        # Determine specific remark prefix based on stop type
+        if stop_type == "pickup":
+            remark = f"Pickup: {display_name}"
+        elif stop_type == "dropoff":
+            remark = f"Dropoff: {display_name}"
+        elif stop_type == "fuel":
+            remark = f"Fueling - {display_name}"
+        else:
+            remark = f"Stop: {display_name}"
+
+        # CRITICAL: Always ensure On Duty status for stops
+        self.add_segment(status, duration, location_name=remark)
         departure = self.current_time
         
         self.stops.append({
             "type": stop_type,
-            "name": name,
+            "name": display_name,
             "arrival": arrival.isoformat(),
             "departure": departure.isoformat(),
             "duration": duration,
@@ -181,72 +187,88 @@ class HOSEngine:
         })
 
     def get_day_logs(self):
-        day_logs = {}
+        day_logs_raw = {}
         for seg in self.segments:
             day_str = seg["start_time"].strftime("%Y-%m-%d")
-            if day_str not in day_logs:
-                day_logs[day_str] = []
+            if day_str not in day_logs_raw:
+                day_logs_raw[day_str] = []
             
-            # Convert start/end times to decimal hours from midnight
-            start_hour = seg["start_time"].hour + seg["start_time"].minute / 60.0 + seg["start_time"].second / 3600.0
-            end_hour = seg["end_time"].hour + seg["end_time"].minute / 60.0 + seg["end_time"].second / 3600.0
+            start_hour = seg["start_time"].hour + seg["start_time"].minute / 60.0
+            end_hour = seg["end_time"].hour + seg["end_time"].minute / 60.0
             
-            # If it exactly hits 24:00, use 24.0
-            if seg["end_time"].hour == 0 and seg["end_time"].minute == 0 and seg["end_time"].day != seg["start_time"].day:
+            # Handle midnight wrap
+            if seg["end_time"].hour == 0 and seg["end_time"].minute == 0 and seg["end_time"].date() > seg["start_time"].date():
                 end_hour = 24.0
                 
-            day_logs[day_str].append({
+            day_logs_raw[day_str].append({
                 "status": seg["status"],
                 "start_hour": round(start_hour, 2),
-                "end_hour": round(end_hour, 2)
+                "end_hour": round(end_hour, 2),
+                "location": seg["location"]
             })
             
-        # Transform to list and add summary for each day
         result = []
-        for day in sorted(day_logs.keys()):
+        for day in sorted(day_logs_raw.keys()):
+            segments = sorted(day_logs_raw[day], key=lambda x: x["start_hour"])
+            
+            # --- Priority 1 Fix: Backfill Midnight ---
+            if segments and segments[0]["start_hour"] > 0:
+                segments.insert(0, {
+                    "status": OFF_DUTY,
+                    "start_hour": 0.0,
+                    "end_hour": segments[0]["start_hour"],
+                    "location": "Midnight Start"
+                })
+            
+            # Ensure total is 24h
+            if segments and segments[-1]["end_hour"] < 24.0:
+                segments.append({
+                    "status": segments[-1]["status"],
+                    "start_hour": segments[-1]["end_hour"],
+                    "end_hour": 24.0,
+                    "location": segments[-1]["location"]
+                })
+                
             result.append({
                 "date": day,
-                "segments": day_logs[day]
+                "segments": segments
             })
         return result
 
 def plan_trip(current_loc, pickup_loc, dropoff_loc, current_cycle_used, route_data):
-    # route_data should contain: total_distance (miles), leg1_distance, leg2_distance, geometry
-    
     engine = HOSEngine(current_cycle_used)
     
-    # Starting location stop
-    engine.add_stop("current_location", 0, ON_DUTY_NOT_DRIVING, name=current_loc["name"])
+    # 1. Start Location (Ensure some duration or it won't show a line)
+    engine.add_stop("current_location", 0.1, ON_DUTY_NOT_DRIVING, name=current_loc["name"])
     
-    # Leg 1
-    engine.process_driving_leg(route_data["leg1_distance"], route_data["geometry"], "Current to Pickup")
+    # 2. Leg 1: Current to Pickup
+    engine.process_driving_leg(route_data["leg1_distance"], route_data["geometry"], leg_name=pickup_loc['name'])
     
-    # Pickup
+    # 3. Pickup
     engine.add_stop("pickup", PICKUP_DURATION, ON_DUTY_NOT_DRIVING, name=pickup_loc["name"])
     
-    # Leg 2
-    engine.process_driving_leg(route_data["leg2_distance"], route_data["geometry"], "Pickup to Dropoff")
+    # 4. Leg 2: Pickup to Dropoff
+    engine.process_driving_leg(route_data["leg2_distance"], route_data["geometry"], leg_name=dropoff_loc['name'])
     
-    # Dropoff
+    # 5. Dropoff
     engine.add_stop("dropoff", DROPOFF_DURATION, ON_DUTY_NOT_DRIVING, name=dropoff_loc["name"])
     
-    summary = {
-        "total_miles": round(route_data["total_distance"], 1),
-        "total_days": len(engine.get_day_logs()),
-        "total_driving_hours": round(sum(s["duration"] for s in engine.stops if s["duty_status"] == DRIVING), 1),
-        "total_rest_hours": round(sum(s["duration"] for s in engine.stops if s["duty_status"] == OFF_DUTY), 1),
-        "cycle_hours_remaining": round(max(0.0, CYCLE_LIMIT - engine.cycle_hours_used), 1)
-    }
-    
-    # Calculate driving hours separately from segments as engine.stops might not have all segments
+    # Summary calculation
     total_drive = 0
+    total_rest = 0
     for seg in engine.segments:
-        if seg["status"] == DRIVING:
-            total_drive += (seg["end_time"] - seg["start_time"]).total_seconds() / 3600.0
-    summary["total_driving_hours"] = round(total_drive, 1)
+        dur = (seg["end_time"] - seg["start_time"]).total_seconds() / 3600.0
+        if seg["status"] == DRIVING: total_drive += dur
+        if seg["status"] in [OFF_DUTY, SLEEPER_BERTH]: total_rest += dur
 
     return {
         "stops": engine.stops,
         "day_logs": engine.get_day_logs(),
-        "summary": summary
+        "summary": {
+            "total_miles": round(route_data["total_distance"], 1),
+            "total_days": len(engine.get_day_logs()),
+            "total_driving_hours": round(total_drive, 1),
+            "total_rest_hours": round(total_rest, 1),
+            "cycle_hours_remaining": round(max(0.0, CYCLE_LIMIT - engine.cycle_hours_used), 1)
+        }
     }
