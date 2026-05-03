@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaMapMarkerAlt, FaClock, FaTruck, FaArrowRight, FaRoute, FaShieldAlt, FaBolt, FaCompass } from 'react-icons/fa';
+import { toast } from 'react-hot-toast';
 
 const TripForm = ({ onSubmit, isLoading }) => {
   const [formData, setFormData] = useState({
@@ -21,9 +22,49 @@ const TripForm = ({ onSubmit, isLoading }) => {
 
   const isMobile = windowWidth < 768;
 
+  const validateForm = () => {
+    const { current_location, pickup_location, dropoff_location, current_cycle_used } = formData;
+
+    // 1. Basic Content Check
+    if (!current_location || !pickup_location || !dropoff_location) {
+      toast.error("Tactical alert: All routing vectors must be defined.");
+      return false;
+    }
+
+    // 2. Format Validation (Lenient City check)
+    const locations = [
+      { val: current_location, name: 'Starting Point' },
+      { val: pickup_location, name: 'Pickup Destination' },
+      { val: dropoff_location, name: 'Final Dropoff' }
+    ];
+
+    for (const loc of locations) {
+      if (loc.val.trim().length < 2) {
+        toast.error(`Invalid Data: ${loc.name} is too short.`);
+        return false;
+      }
+    }
+
+    // 3. Cycle Hours Validation (FMCSA standard)
+    if (current_cycle_used < 0 || current_cycle_used > 70) {
+      toast.error("Compliance Violation: Cycle hours must be between 0 and 70 (HOS Rule).");
+      return false;
+    }
+
+    // 4. Duplicate Check
+    if (current_location.toLowerCase() === pickup_location.toLowerCase()) {
+      toast.error("Routing Conflict: Starting point and Pickup cannot be identical.");
+      return false;
+    }
+
+    return true;
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit(formData);
+    if (validateForm()) {
+      onSubmit(formData);
+    }
   };
 
   const handleChange = (e) => {
@@ -46,9 +87,9 @@ const TripForm = ({ onSubmit, isLoading }) => {
   };
 
   const inputFields = [
-    { name: 'current_location', label: 'Starting Point', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'e.g. Newark, NJ' },
-    { name: 'pickup_location', label: 'Pickup Destination', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'e.g. Chicago, IL' },
-    { name: 'dropoff_location', label: 'Final Dropoff', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'e.g. Los Angeles, CA' },
+    { name: 'current_location', label: 'Starting Point', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'City, State (e.g. Newark, NJ)' },
+    { name: 'pickup_location', label: 'Pickup Destination', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'City, State (e.g. Chicago, IL)' },
+    { name: 'dropoff_location', label: 'Final Dropoff', icon: <FaMapMarkerAlt />, color: '#f59e0b', placeholder: 'City, State (e.g. Los Angeles, CA)' },
   ];
 
   return (

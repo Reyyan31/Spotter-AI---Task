@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
+import { Toaster } from 'react-hot-toast';
 import TripForm from './components/TripForm';
 import ResultsDashboard from './components/ResultsDashboard';
 
@@ -32,6 +33,26 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white selection:bg-accent selection:text-navy" style={{ fontFamily: 'var(--font-main)' }}>
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: '#1a1b1e',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '1rem',
+            fontSize: '14px',
+            fontWeight: 600,
+            padding: '16px 24px',
+          },
+          success: {
+            iconTheme: { primary: '#10b981', secondary: '#fff' }
+          },
+          error: {
+            iconTheme: { primary: '#ef4444', secondary: '#fff' }
+          }
+        }}
+      />
       {/* Top Loading Progress Bar */}
       <AnimatePresence>
         {loading && (

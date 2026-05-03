@@ -894,6 +894,11 @@ h6 {
   padding: 0;
 }
 
+body.modal-open {
+  overflow: hidden !important;
+  height: 100vh !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -1000,4 +1005,29 @@ body.modal-open .leaflet-container {
   100% {
     background-position: 0% 50%;
   }
+}
+
+.preview-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #f59e0b rgba(255, 255, 255, 0.05);
+}
+
+.preview-scrollbar::-webkit-scrollbar {
+  width: 14px;
+}
+
+.preview-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+}
+
+.preview-scrollbar::-webkit-scrollbar-thumb {
+  background: #f59e0b;
+  border-radius: 7px;
+  border: 3px solid #0a0a0a;
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.8);
+}
+
+.preview-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #d97706;
 }

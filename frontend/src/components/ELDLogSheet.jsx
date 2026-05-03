@@ -7,6 +7,15 @@ const ELDLogSheet = ({ logData, dayIndex }) => {
   const canvasRef = useRef(null);
   const previewCanvasRef = useRef(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 768;
 
   const drawToCanvas = (canvas) => {
     if (!canvas) return;
@@ -253,12 +262,24 @@ const ELDLogSheet = ({ logData, dayIndex }) => {
               </button>
 
               <div className="flex items-center justify-center w-full h-full p-4">
-                <motion.div 
-                  initial={{ scale: 0.9, y: 20, opacity: 0 }}
-                  animate={{ scale: 1, y: 0, opacity: 1 }}
-                  exit={{ scale: 0.9, y: 20, opacity: 0 }}
-                  className="relative w-[80vw] h-[80vh] bg-[#1a1b1e] rounded-3xl overflow-hidden shadow-[0_0_100px_rgba(0,0,0,1)] border border-white/10 flex flex-col"
-                >
+                  <motion.div 
+                    initial={{ scale: 0.9, y: 20, opacity: 0 }}
+                    animate={{ scale: 1, y: 0, opacity: 1 }}
+                    exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                    style={{ 
+                      position: 'relative', 
+                      width: '90vw', 
+                      maxWidth: '1200px',
+                      height: '85vh', 
+                      backgroundColor: '#1a1b1e', 
+                      borderRadius: '2rem', 
+                      overflow: 'hidden', 
+                      display: 'flex', 
+                      flexDirection: 'column',
+                      boxShadow: '0 0 100px rgba(0,0,0,1)',
+                      border: '1px solid rgba(255,255,255,0.1)'
+                    }}
+                  >
                   {/* Mac-Style Window Header */}
                   <div className="flex items-center justify-between px-6 py-4 bg-[#25262b] border-b border-white/5 shrink-0">
                     <div className="flex space-x-2">
@@ -272,26 +293,70 @@ const ELDLogSheet = ({ logData, dayIndex }) => {
                     <div className="w-8" />
                   </div>
                   
-                  <div className="relative p-6 md:p-12 lg:p-16 bg-[#000000]/40 overflow-y-auto custom-scrollbar flex-1">
-                    <div className="shadow-2xl rounded-lg overflow-hidden max-w-[1000px] mx-auto">
+                  <div 
+                    style={{ 
+                      flex: 1, 
+                      overflowY: 'auto', 
+                      minHeight: 0,
+                      backgroundColor: 'rgba(0,0,0,0.4)',
+                      padding: isMobile ? '1rem' : '2.5rem'
+                    }} 
+                    className="preview-scrollbar"
+                  >
+                    <div style={{ 
+                      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', 
+                      borderRadius: '0.5rem', 
+                      overflow: 'hidden', 
+                      width: '100%',
+                      maxWidth: '1000px', 
+                      margin: '0 auto',
+                      backgroundColor: 'white'
+                    }}>
                       <canvas 
                         ref={previewCanvasRef} 
-                        className="w-full h-auto block bg-white"
+                        style={{ width: '100%', height: 'auto', display: 'block' }}
                       />
                     </div>
                   </div>
 
                   {/* Footer Section */}
-                  <div className="px-10 py-6 md:py-10 bg-[#1a1b1e] border-t border-white/5 flex flex-col md:flex-row items-center justify-between shrink-0 gap-6">
-                    <div className="flex flex-col items-start">
-                      <span className="text-[10px] font-black text-gray-600 uppercase tracking-[0.4em] mb-2">Visual Deep Dive</span>
-                      <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight leading-tight">Spotter AI Official Record</h2>
+                  <div style={{ 
+                    padding: isMobile ? '1.5rem' : '2rem 3rem',
+                    backgroundColor: '#1a1b1e',
+                    borderTop: '1px solid rgba(255,255,255,0.05)',
+                    display: 'flex',
+                    flexDirection: isMobile ? 'column' : 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '1.5rem',
+                    shrink: 0
+                  }}>
+                    <div style={{ textAlign: isMobile ? 'center' : 'left' }}>
+                      <span style={{ fontSize: '10px', fontWeight: 900, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.4em', display: 'block', marginBottom: '0.25rem' }}>Visual Deep Dive</span>
+                      <h2 style={{ fontSize: isMobile ? '1.25rem' : '1.5rem', fontWeight: 800, color: 'white', letterSpacing: '-0.02em' }}>Spotter AI Official Record</h2>
                     </div>
                     <button 
                       onClick={handleDownload}
-                      className="flex items-center space-x-3 px-8 py-3.5 bg-accent text-navy rounded-2xl font-black hover:scale-105 transition-all shadow-[0_10px_20px_rgba(245,158,11,0.3)]"
+                      style={{ 
+                        width: isMobile ? '100%' : 'auto',
+                        padding: '1rem 2.5rem',
+                        background: 'linear-gradient(90deg, #f59e0b 0%, #ff8c00 100%)',
+                        color: '#0a0f1e',
+                        borderRadius: '1rem',
+                        fontWeight: 900,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.2em',
+                        fontSize: '0.875rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.75rem',
+                        boxShadow: '0 10px 30px rgba(245,158,11,0.2)',
+                        cursor: 'pointer'
+                      }}
+                      className="hover:scale-105 transition-all"
                     >
-                      <FaDownload className="text-lg" />
+                      <FaDownload style={{ fontSize: '1rem' }} />
                       <span>SECURE EXPORT</span>
                     </button>
                   </div>
