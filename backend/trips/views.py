@@ -1,4 +1,5 @@
 import os
+import logging
 import requests
 from django.shortcuts import render
 from django.http import JsonResponse
@@ -8,14 +9,24 @@ from rest_framework import status
 from .hos_engine import plan_trip
 from concurrent.futures import ThreadPoolExecutor
 
+logger = logging.getLogger(__name__)
+
 ORS_API_KEY = os.getenv('ORS_API_KEY')
 ORS_GEOCODE_URL = "https://api.openrouteservice.org/geocode/search"
-ORS_URL = "https://api.openrouteservice.org/v2/directions/driving-hgv/geojson"
+
+# Routing profiles: HGV first (real truck routing), car as ORS fallback
+ORS_HGV_URL = "https://api.openrouteservice.org/v2/directions/driving-hgv/geojson"
+ORS_CAR_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+# OSRM: free, no API key, excellent US road coverage — final bulletproof fallback
+OSRM_URL = "http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=full&geometries=geojson"
 
 http_session = requests.Session()
 GEOCODE_CACHE = {}
 
-# ─── Known US state names → capital cities ───
+# Locations not reachable by road from the contiguous US
+UNREACHABLE_BY_ROAD = {'alaska', 'ak', 'hawaii', 'hi', 'anchorage', 'honolulu'}
+
+# ─── Known US state names → major city ───
 STATE_CAPITALS = {
     'alabama': 'Montgomery, AL', 'alaska': 'Anchorage, AK', 'arizona': 'Phoenix, AZ',
     'arkansas': 'Little Rock, AR', 'california': 'Los Angeles, CA', 'colorado': 'Denver, CO',
@@ -42,9 +53,11 @@ def index(request):
     """Serve React's index.html as the catch-all view"""
     return render(request, 'index.html')
 
+
 def health_check(request):
     """Simple health check endpoint"""
     return JsonResponse({'status': 'ok', 'message': 'Django API is running!'})
+
 
 @api_view(['GET'])
 def api_message(request):
@@ -62,6 +75,7 @@ def normalize_location(text):
 
 
 def geocode(location_name):
+    """Geocode a location, restricted to US results to prevent international mismatches."""
     if not location_name:
         return None
 
@@ -69,37 +83,53 @@ def geocode(location_name):
     if cache_key in GEOCODE_CACHE:
         return GEOCODE_CACHE[cache_key]
 
-    # Force city-level results so we never land in a desert
-    params = {
-        'api_key': ORS_API_KEY,
-        'text': location_name,
-        'size': 1,
-        'layers': 'locality,localadmin,neighbourhood',
-    }
-    try:
-        response = http_session.get(ORS_GEOCODE_URL, params=params, timeout=8)
-        data = response.json()
-        features = data.get('features', [])
-        if not features:
-            # Retry without layer filter as a fallback
-            params.pop('layers')
-            response = http_session.get(ORS_GEOCODE_URL, params=params, timeout=8)
-            data = response.json()
-            features = data.get('features', [])
-            if not features:
-                return None
-
-        feature = features[0]
-        result = {
-            'name': feature['properties'].get('label', location_name),
-            'lat': float(feature['geometry']['coordinates'][1]),
-            'lon': float(feature['geometry']['coordinates'][0])
+    def _try_geocode(extra_params):
+        params = {
+            'api_key': ORS_API_KEY,
+            'text': location_name,
+            'size': 3,  # Get top 3 and pick the US one
+            'boundary.country': 'USA',  # Restrict to US results
+            **extra_params,
         }
-        GEOCODE_CACHE[cache_key] = result
-        return result
-    except Exception as e:
-        print(f"Geocoding error for {location_name}: {e}")
+        try:
+            response = http_session.get(ORS_GEOCODE_URL, params=params, timeout=10)
+            data = response.json()
+            return data.get('features', [])
+        except Exception as e:
+            logger.warning(f"Geocode request failed for '{location_name}': {e}")
+            return []
+
+    # Try with locality filter first
+    features = _try_geocode({'layers': 'locality,localadmin,neighbourhood'})
+
+    # If nothing, retry without the layer filter (still US-only)
+    if not features:
+        features = _try_geocode({})
+
+    if not features:
+        logger.error(f"Geocoding returned no results for '{location_name}'")
         return None
+
+    # Pick the first US result
+    feature = None
+    for f in features:
+        country = f['properties'].get('country_a', '') or f['properties'].get('country', '')
+        if country in ('USA', 'United States'):
+            feature = f
+            break
+
+    # If no US result found among results, take first result anyway
+    if not feature:
+        feature = features[0]
+
+    result = {
+        'name': feature['properties'].get('label', location_name),
+        'lat': float(feature['geometry']['coordinates'][1]),
+        'lon': float(feature['geometry']['coordinates'][0]),
+    }
+    GEOCODE_CACHE[cache_key] = result
+    logger.info(f"Geocoded '{location_name}' -> {result['name']} ({result['lat']:.4f}, {result['lon']:.4f})")
+    return result
 
 
 def find_point_at_distance(geometry, target_miles):
@@ -118,22 +148,97 @@ def find_point_at_distance(geometry, target_miles):
     return geometry[-1][1], geometry[-1][0]
 
 
-def fetch_route_leg(pair):
-    """Fetch a single route leg with progressive radius retry."""
-    start, end = pair
+def _fetch_ors_leg(url, start, end):
+    """Try a single ORS profile with multiple snap radii."""
     headers = {'Authorization': ORS_API_KEY, 'Content-Type': 'application/json'}
-
-    for radius in [5000, 25000, 50000]:
+    profile_name = url.split('directions/')[-1].split('/')[0]
+    for radius in [1000, 15000, 50000]:
         body = {
             "coordinates": [[start['lon'], start['lat']], [end['lon'], end['lat']]],
-            "radiuses": [radius, radius]
+            "radiuses": [radius, radius],
         }
         try:
-            res = http_session.post(ORS_URL, json=body, headers=headers, timeout=20)
+            res = http_session.post(url, json=body, headers=headers, timeout=20)
             if res.status_code == 200:
-                return res.json()
-        except:
-            pass
+                data = res.json()
+                if data.get('features') and data['features'][0].get('geometry', {}).get('coordinates'):
+                    logger.info(f"ORS [{profile_name}] resolved leg (r={radius})")
+                    return data
+            else:
+                logger.debug(f"ORS [{profile_name}, r={radius}] HTTP {res.status_code}")
+        except Exception as e:
+            logger.debug(f"ORS [{profile_name}, r={radius}] error: {e}")
+    return None
+
+
+def _fetch_osrm_leg(start, end):
+    """
+    OSRM fallback — free, no API key, best US road coverage.
+    Converts OSRM response to ORS-compatible format.
+    """
+    url = OSRM_URL.format(
+        lon1=start['lon'], lat1=start['lat'],
+        lon2=end['lon'],   lat2=end['lat'],
+    )
+    try:
+        res = http_session.get(url, timeout=25)
+        if res.status_code != 200:
+            logger.warning(f"OSRM HTTP {res.status_code}")
+            return None
+        data = res.json()
+        if data.get('code') != 'Ok' or not data.get('routes'):
+            logger.warning(f"OSRM bad response: {data.get('code')}")
+            return None
+
+        route = data['routes'][0]
+        coords = route['geometry']['coordinates']
+        distance_m = route['distance']      # metres
+        duration_s = route['duration']      # seconds
+
+        # Wrap in ORS-compatible structure so build_trip doesn't need to change
+        ors_compatible = {
+            'features': [{
+                'geometry': {'coordinates': coords},
+                'properties': {
+                    'segments': [{
+                        'distance': distance_m,
+                        'duration': duration_s,
+                    }]
+                }
+            }]
+        }
+        logger.info(f"OSRM resolved leg: {distance_m/1000:.1f} km")
+        return ors_compatible
+    except Exception as e:
+        logger.warning(f"OSRM error: {e}")
+        return None
+
+
+def fetch_route_leg(pair):
+    """
+    Triple-layer routing strategy:
+      1. ORS driving-hgv  (realistic truck routing)
+      2. ORS driving-car  (reliable ORS fallback)
+      3. OSRM driving     (bulletproof, always works for US roads)
+    """
+    start, end = pair
+
+    # Layer 1: ORS HGV
+    result = _fetch_ors_leg(ORS_HGV_URL, start, end)
+    if result:
+        return result
+
+    # Layer 2: ORS Car
+    result = _fetch_ors_leg(ORS_CAR_URL, start, end)
+    if result:
+        return result
+
+    # Layer 3: OSRM (guaranteed for any routable road pair)
+    result = _fetch_osrm_leg(start, end)
+    if result:
+        return result
+
+    logger.error(f"All routing layers failed: {start.get('name')} -> {end.get('name')}")
     return None
 
 
@@ -144,7 +249,7 @@ def build_trip(loc1, loc2, loc3, cycle):
         leg_results = list(executor.map(fetch_route_leg, legs))
 
     if any(r is None for r in leg_results):
-        raise ValueError("Routing failed")
+        raise ValueError("Routing failed — all routing providers exhausted")
 
     feat1, feat2 = leg_results[0]['features'][0], leg_results[1]['features'][0]
     geom1, geom2 = feat1['geometry']['coordinates'], feat2['geometry']['coordinates']
@@ -179,12 +284,13 @@ def build_trip(loc1, loc2, loc3, cycle):
 # ─── Cached demo trip (lazy-loaded once) ───
 _DEMO_CACHE = {}
 
+
 def get_demo_trip():
     if 'data' in _DEMO_CACHE:
         return _DEMO_CACHE['data']
-    loc1 = {'name': 'Newark, NJ', 'lat': 40.7357, 'lon': -74.1724}
-    loc2 = {'name': 'Chicago, IL', 'lat': 41.8781, 'lon': -87.6298}
-    loc3 = {'name': 'Los Angeles, CA', 'lat': 34.0522, 'lon': -118.2437}
+    loc1 = {'name': 'Newark, NJ',      'lat': 40.7357,  'lon': -74.1724}
+    loc2 = {'name': 'Chicago, IL',     'lat': 41.8781,  'lon': -87.6298}
+    loc3 = {'name': 'Los Angeles, CA', 'lat': 34.0522,  'lon': -118.2437}
     result = build_trip(loc1, loc2, loc3, 0)
     _DEMO_CACHE['data'] = result
     return result
@@ -198,30 +304,55 @@ def plan_trip_view(request):
     raw3 = data.get('dropoff_location', '').strip()
     try:
         cycle = float(data.get('current_cycle_used', 0))
-    except:
+    except Exception:
         cycle = 0.0
 
-    # ── Step 0: Normalize state names → major cities ──
-    norm1, norm2, norm3 = normalize_location(raw1), normalize_location(raw2), normalize_location(raw3)
+    logger.info(f"Trip request: '{raw1}' -> '{raw2}' -> '{raw3}', cycle={cycle}")
 
-    # ── Step 1: Parallel geocode ──
+    # ── Step 0: No inputs → demo trip ──
+    if not raw1 and not raw2 and not raw3:
+        logger.info("No locations provided — returning demo trip")
+        try:
+            return Response(get_demo_trip())
+        except Exception as e:
+            logger.error(f"Demo trip failed: {e}")
+            return Response({'error': 'Demo trip generation failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ── Step 1: Normalize state names → cities ──
+    norm1 = normalize_location(raw1)
+    norm2 = normalize_location(raw2)
+    norm3 = normalize_location(raw3)
+    logger.info(f"Normalized: '{norm1}' -> '{norm2}' -> '{norm3}'")
+
+    # ── Step 2: Reject locations unreachable by road ──
+    for label, name in [('Starting point', raw1), ('Pickup', raw2), ('Dropoff', raw3)]:
+        if name.strip().lower() in UNREACHABLE_BY_ROAD:
+            return Response(
+                {'error': f'{label} "{name}" is not reachable by road from the contiguous US.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    # ── Step 3: Geocode (US-restricted) ──
     with ThreadPoolExecutor(max_workers=3) as executor:
         locs = list(executor.map(geocode, [norm1, norm2, norm3]))
 
-    if not all(locs):
-        # Geocoding failed — silent fallback
-        try:
-            return Response(get_demo_trip())
-        except:
-            return Response({'stops': [], 'day_logs': [], 'summary': {}})
+    logger.info(f"Geocode results: {locs}")
 
-    # ── Step 2: Route + HOS ──
+    if not all(locs):
+        failed = [name for name, loc in zip([norm1, norm2, norm3], locs) if not loc]
+        logger.error(f"Geocoding failed for: {failed}")
+        return Response(
+            {'error': f'Could not locate: {", ".join(failed)}. Please use specific city names like "Chicago, IL".'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # ── Step 4: Route + HOS (triple-layer routing) ──
     try:
         plan = build_trip(locs[0], locs[1], locs[2], cycle)
         return Response(plan)
-    except:
-        # Routing / HOS failed — silent fallback
-        try:
-            return Response(get_demo_trip())
-        except:
-            return Response({'stops': [], 'day_logs': [], 'summary': {}})
+    except Exception as e:
+        logger.error(f"Routing/HOS failed: {e}", exc_info=True)
+        return Response(
+            {'error': 'Route calculation failed. Please verify your locations are valid US cities.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
