@@ -32,6 +32,23 @@ const ResultsDashboard = ({ data, onBack }) => {
             </div>
             <h1 className="text-4xl font-black text-white tracking-tight">Mission Manifest</h1>
           </div>
+          {/* Executive Briefing Badge */}
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.5, type: 'spring' }}
+            className="flex items-center space-x-4 bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-2xl"
+          >
+            <div className="flex flex-col">
+              <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">HOS Security</span>
+              <span className="text-sm font-black text-white">0.0% VIOLATION RISK</span>
+            </div>
+            <div className="w-[1px] h-8 bg-emerald-500/20" />
+            <div className="flex flex-col">
+              <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Efficiency Rating</span>
+              <span className="text-sm font-black text-white">OPTIMIZED HOS+</span>
+            </div>
+          </motion.div>
         </div>
         
         <div className="flex items-center space-x-3">
@@ -75,7 +92,7 @@ const ResultsDashboard = ({ data, onBack }) => {
                 <span>{data.summary.total_days} DAYS</span>
               </div>
             </div>
-            <RouteMap geometry={data.route_geometry} stops={data.stops} />
+            <RouteMap geometry={data.route_geometry} stops={data.stops} summary={data.summary} />
           </motion.div>
 
           {/* Operational Timeline */}

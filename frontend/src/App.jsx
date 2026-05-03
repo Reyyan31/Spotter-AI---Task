@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
@@ -8,7 +8,21 @@ import ResultsDashboard from './components/ResultsDashboard';
 function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [tripData, setTripData] = useState(null);
+  
+  // Persistence Layer: Load initial state from localStorage
+  const [tripData, setTripData] = useState(() => {
+    const saved = localStorage.getItem('spotter_ai_trip_data');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  // Sync with localStorage whenever tripData changes
+  useEffect(() => {
+    if (tripData) {
+      localStorage.setItem('spotter_ai_trip_data', JSON.stringify(tripData));
+    } else {
+      localStorage.removeItem('spotter_ai_trip_data');
+    }
+  }, [tripData]);
 
   const handlePlanTrip = async (formData) => {
     setLoading(true);
@@ -29,6 +43,8 @@ function App() {
   const handleReset = () => {
     setTripData(null);
     setError(null);
+    localStorage.removeItem('spotter_ai_trip_data');
+    localStorage.removeItem('spotter_ai_signature'); // Also clear global signature on hard reset
   };
 
   return (
@@ -90,6 +106,7 @@ function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <motion.div 
               whileHover={{ rotate: 180, scale: 1.05 }}
+              onClick={handleReset}
               style={{ 
                 width: '2.75rem', height: '2.75rem', 
                 backgroundColor: '#f59e0b', 
