@@ -10,34 +10,34 @@ const ResultsDashboard = ({ data, onBack }) => {
   const [activeDay, setActiveDay] = useState(0);
 
   return (
-    <div className="max-w-1600 mx-auto px-4 lg:px-8 py-8">
+    <div className="max-w-1600 mx-auto px-4 lg:px-8 py-8 overflow-x-hidden">
       {/* Top Action Bar */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col md:flex-row md:items-center justify-between mb-10 space-y-4 md:space-y-0"
       >
-        <div className="flex items-center space-x-6">
+        <div className="flex items-center space-x-4 min-w-0">
           <button 
             onClick={onBack}
-            className="group flex items-center justify-center w-12 h-12 rounded-full bg-white/5 border border-white/10 hover:bg-accent hover:border-accent transition-all duration-300 shadow-lg"
+            className="group flex-shrink-0 flex items-center justify-center w-12 h-12 rounded-full bg-white/5 border border-white/10 hover:bg-accent hover:border-accent transition-all duration-300 shadow-lg"
             title="Back to search"
           >
             <FaArrowLeft className="group-hover:scale-110 transition-transform" />
           </button>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center space-x-2 text-accent text-xs font-bold uppercase tracking-widest mb-1">
               <FaRobot />
               <span>AI Engine Output</span>
             </div>
-            <h1 className="text-4xl font-black text-white tracking-tight">Mission Manifest</h1>
+            <h1 className="text-2xl md:text-4xl font-black text-white tracking-tight leading-none">Mission Manifest</h1>
           </div>
-          {/* Executive Briefing Badge */}
+          {/* Executive Briefing Badge — hidden on small screens to prevent overflow */}
           <motion.div 
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.5, type: 'spring' }}
-            className="flex items-center space-x-4 bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-2xl"
+            className="hidden sm:flex items-center space-x-4 bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 rounded-2xl flex-shrink-0"
           >
             <div className="flex flex-col">
               <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">HOS Security</span>
