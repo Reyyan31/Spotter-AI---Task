@@ -1,160 +1,90 @@
-import { useState, useEffect } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import React, { useState } from 'react';
+import axios from 'axios';
+import { AnimatePresence, motion } from 'framer-motion';
+import TripForm from './components/TripForm';
+import ResultsDashboard from './components/ResultsDashboard';
 
 function App() {
-  const [count, setCount] = useState(0)
-  const [apiData, setApiData] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [tripData, setTripData] = useState(null);
 
-  useEffect(() => {
-    fetch('/api/message/')
-      .then(res => res.json())
-      .then(data => {
-        setApiData(data)
-        setLoading(false)
-      })
-      .catch(err => {
-        console.error('API Error:', err)
-        setLoading(false)
-      })
-  }, [])
+  const handlePlanTrip = async (formData) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.post('/api/trip/plan/', formData);
+      setTripData(response.data);
+    } catch (err) {
+      console.error(err);
+      const errorMsg = err.response?.data?.error || 'An unexpected error occurred.';
+      const details = err.response?.data?.details ? ` - ${err.response.data.details}` : '';
+      setError(`${errorMsg}${details}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setTripData(null);
+    setError(null);
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
+    <div className="min-h-screen bg-navy">
+      <header className="gradient-header py-12 px-4 shadow-2xl border-b border-[#2e303a]">
+        <div className="max-w-7xl mx-auto flex flex-col items-center text-center">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="flex items-center space-x-4 mb-4"
+          >
+            <div className="h-px w-12 bg-accent"></div>
+            <span className="text-accent font-bold tracking-wide-03 text-xs uppercase">Intelligent Logistics</span>
+            <div className="h-px w-12 bg-accent"></div>
+          </motion.div>
+          <h1 className="text-5xl lg:text-7xl font-bold tracking-tighter mb-4 text-white">
+            Spotter <span className="text-accent">AI</span>
+          </h1>
+          <p className="text-muted max-w-2xl text-lg">
+            High-precision trip planning and automated FMCSA-compliant HOS log generation for modern carriers.
           </p>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+      </header>
 
-      <div className="ticks"></div>
+      <main className="py-12">
+        <AnimatePresence mode="wait">
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-xl mx-auto mb-8 p-4 bg-red-soft border border-red-500/50 rounded-xl text-red-500 text-center"
+            >
+              {error}
+            </motion.div>
+          )}
 
-      <section id="api-section" style={{ padding: '2rem', background: '#1a1a2e', borderRadius: '12px', margin: '1rem 0' }}>
-        <h2 style={{ color: '#646cff' }}>Django API Response</h2>
-        {loading ? (
-          <p>Loading from API...</p>
-        ) : apiData ? (
-          <div style={{ textAlign: 'left', maxWidth: '500px', margin: '0 auto' }}>
-            <p><strong>Message:</strong> {apiData.message}</p>
-            <p><strong>App:</strong> {apiData.data?.app}</p>
-            <p><strong>Version:</strong> {apiData.data?.version}</p>
-            <p><strong>Features:</strong></p>
-            <ul style={{ listStyle: 'none', padding: 0 }}>
-              {apiData.data?.features?.map((feature, i) => (
-                <li key={i} style={{ padding: '0.25rem 0' }}>• {feature}</li>
-              ))}
-            </ul>
+          {!tripData ? (
+            <TripForm key="form" onSubmit={handlePlanTrip} isLoading={loading} />
+          ) : (
+            <ResultsDashboard key="results" data={tripData} onBack={handleReset} />
+          )}
+        </AnimatePresence>
+      </main>
+
+      <footer className="py-12 border-t border-[#2e303a] mt-auto">
+        <div className="max-w-7xl mx-auto px-4 text-center text-[#6b7280] text-sm">
+          <p>&copy; 2026 Spotter AI Transport. All rights reserved.</p>
+          <div className="mt-4 flex justify-center space-x-6">
+            <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="#" className="hover:text-white transition-colors">Contact Support</a>
           </div>
-        ) : (
-          <p style={{ color: '#ff6b6b' }}>Failed to fetch from API</p>
-        )}
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      </footer>
+    </div>
+  );
 }
 
-export default App
+export default App;
